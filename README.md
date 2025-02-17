@@ -40,12 +40,12 @@ If you encounter difficulties during data preprocessing, you can download dense 
 ## Training
 LLFF datasets. 
 ``` 
-python train.py  -s dataset/nerf_llff_data/trex -m output/trex --eval --n_views 3 --comp --store_npz
+python train.py  -s dataset/nerf_llff_data/trex -m output/trex --eval --n_views 3 --comp --store_npz --net_lr_step 6000 --iteraion 9000
 ```
 
 MipNerf360 datasets
 ``` 
-python train_360.py  -s dataset/mipnerf360/counter -s output/counter --eval --n_views 24 --comp --store_npz
+python train_360.py  -s dataset/mipnerf360/counter -s output/counter --eval --n_views 24 --comp --store_npz --iteration 10000
 
 If you need to evaluate on 9 views
 Please remove the commented part of this code (https://github.com/LeeXiaoTong1/LFVGS/blob/24f1de9b99f2951953148a2e51e5c89f2dafc3b5/scene/dataset_readers.py#L263C1-L285C29). And comment out the line “ply_path = os.path.join(path, str(n_views) + "_views/dense/fused.ply")”
