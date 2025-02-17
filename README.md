@@ -50,7 +50,7 @@ python train_360.py  -s dataset/mipnerf360/counter -s output/counter --eval --n_
 If you need to evaluate on 9 views
 Please remove the commented part of this code (https://github.com/LeeXiaoTong1/LFVGS/blob/24f1de9b99f2951953148a2e51e5c89f2dafc3b5/scene/dataset_readers.py#L263C1-L285C29). And comment out the line “ply_path = os.path.join(path, str(n_views) + "_views/dense/fused.ply")”
 
-python train_360.py  -s dataset/mipnerf360/counter -s output/counter --eval --n_views 9 --comp --store_npz
+python train_360.py  -s dataset/mipnerf360/counter -s output/counter --eval --n_views 9 --comp --store_npz --iteration 10000
 ```
 For some scenarios, if the results are significantly different from those in the original paper, it is recommended to manually adjust the number of training rounds to 9,000.
 
