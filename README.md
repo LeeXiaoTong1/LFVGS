@@ -9,6 +9,9 @@ unzip diff-gaussian-rasterization-depth.zip
 cd ..
 conda env create --file environment.yml
 conda activate LVGS
+mkdir checkpoints
+wget https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth
+cd ..
 ```
 
 ## Data Preparation
