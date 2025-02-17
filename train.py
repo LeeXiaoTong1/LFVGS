@@ -43,7 +43,6 @@ from depth_anything_v2.dpt import DepthAnythingV2
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
 
-# 加载模型
 def load_depth_model(mode='vitl'):
     model_configs = {
         'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
@@ -56,7 +55,7 @@ def load_depth_model(mode='vitl'):
     model.load_state_dict(torch.load(f'checkpoints/depth_anything_v2_{mode}.pth', map_location='cpu'))
     model = model.to(DEVICE).eval()
     return model
-# 在训练开始时加载模型
+
 depth_model = load_depth_model('vitl')
 
 
@@ -132,17 +131,11 @@ def training(dataset, opt, pipe, args, depth_model):
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))
-
-
-        # render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-        
-#         if opt.transform == "downsample":
-#             gt_image = downsample_image(gt_image, resize_scale_sched(iteration))
-        
-        
+
+        # about compact3dgs
         if iteration <= opt.rvq_iter:
             render_pkg = render(viewpoint_cam, gaussians, pipe, background, image_shape=gt_image.shape, itr=iteration, rvq_iter=False)
         else:
@@ -152,86 +145,44 @@ def training(dataset, opt, pipe, args, depth_model):
 
         
         Ll1 =  l1_loss_mask(image, gt_image)
-        # loss = ((1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)))
-        # loss = ((1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))) + opt.lambda_mask*torch.mean((torch.sigmoid(gaussians._mask)))
         loss = ((1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image)))
+        loss = loss + args.opacity_reg * torch.abs(gaussians.get_opacity).mean()
 
-        # loss = loss + args.opacity_reg * torch.abs(gaussians.get_opacity).mean()
-        # loss = loss + args.scale_reg * torch.abs(gaussians.get_scaling).mean()
-
-        rendered_depth = render_pkg["depth"][0]
+        # rendered_depth = render_pkg["depth"][0]
+        rendered_depth = render_pkg["depth"]
         midas_depth = torch.tensor(viewpoint_cam.depth_image).cuda().squeeze()
-        
-#         lambda_normal = opt.lambda_normal if iteration > 2000 else 0.0
-        
-#         rendered_norm = render_pkg["normal"][0]
-#         depth_normal = torch.tensor(viewpoint_cam.normal_map).cuda().squeeze()
-#         normal = depth_normal[..., 0]
-#         print(f"rendered_norm.shape: {rendered_norm.shape}")
-#         print(f"normal.shape: {normal.shape}")
-
-#         normal_error = (1 - (rendered_norm * normal).sum(dim=0))[None]
-#         normal_error = torch.norm((rendered_norm - normal), dim=-1)
-#         normal_loss = lambda_normal * (normal_error).mean()
-#         loss = loss + normal_loss
         
         # 反转 rendered_depth 的深度值
         max_depth_value = rendered_depth.max()
         rendered_depth_inverted = max_depth_value - rendered_depth
         
-        
-#         print(rendered_depth.shape)
-#         print('/////////////////////////////////////////////////////////////')
-#         print(midas_depth.shape)
-        
-        
-
-        # print(
-        #     f"Iteration {iteration}: midas_depth shape: {midas_depth.shape}, rendered_depth shape: {rendered_depth.shape}")
         if iteration % 1000 == 0:
             save_depth_image(midas_depth, f'midas_depth_{iteration}.png')
             save_depth_image(rendered_depth_inverted, f'rendered_depth_{iteration}.png')
-
-        # Ensure both depths have the same dimensions
-        midas_depth_resized = torch.nn.functional.interpolate(
-            midas_depth.unsqueeze(0).unsqueeze(0),
-            size=rendered_depth.shape,
-            mode='bicubic',
-            align_corners=False
-        ).squeeze()
-
-        rendered_depth = rendered_depth.reshape(-1, 1)
-        # rendered_depth_flat = rendered_depth_inverted.reshape(-1, 1)
-        midas_depth_t = midas_depth_resized.reshape(-1, 1)
-        
-        
-
+   
+        midas_depth_t = midas_depth.reshape(-1, 1).double()
+        rendered_depth = rendered_depth.reshape(-1, 1).double()
+     
         depth_loss = min(
             (1 - pearson_corrcoef(-midas_depth_t, rendered_depth)),
-            (1 - pearson_corrcoef(1 / (midas_depth_t + 200.), rendered_depth))
+            (1 - pearson_corrcoef(1 / (midas_depth_t + 200.) , rendered_depth))
         )
-        
 
         loss += args.depth_weight * depth_loss
-
-        if iteration > args.end_sample_pseudo:
-        # if iteration > 2000:
-            args.depth_weight = 0.001
             
         import torch.nn.functional as F
-        patch_range = (5, 17)
+        patch_range = (5, 7)
         
-        depth_n = render_pkg["depth"][0].unsqueeze(0)
+        # depth_n = render_pkg["depth"][0].unsqueeze(0)
+        depth_n = render_pkg["depth"].unsqueeze(0)
         anyth_n = midas_depth.unsqueeze(0)
         
-        # 将 anyth_n 调整为与 depth_n 相同的尺度
         anyth_n = F.interpolate(anyth_n.unsqueeze(0), size=depth_n.shape[-2:], mode='bilinear', align_corners=False).squeeze(0)
         anyth_n = 255.0 - anyth_n
         
         loss_l2_dpt = patch_norm_mse_loss(depth_n[None,...], anyth_n[None,...], randint(patch_range[0], patch_range[1]), opt.error_tolerance)
-        # loss += 0.08 * loss_l2_dpt
-        loss += 0.01 * loss_l2_dpt
-
+        # llff
+        loss += 0.02 * loss_l2_dpt
 
         loss.backward()
 
@@ -257,12 +208,6 @@ def training(dataset, opt, pipe, args, depth_model):
             if iteration > first_iter and (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration, compress=comp, store=store_npz)
-
-            # if iteration > first_iter and (iteration in checkpoint_iterations):
-            #     print("\n[ITER {}] Saving Checkpoint".format(iteration))
-            #     torch.save((gaussians.capture(), iteration),
-            #                scene.model_path + "/chkpnt" + str(iteration) + ".pth")
-            
 
             #Densification
             if  iteration < opt.densify_until_iter:
@@ -372,17 +317,12 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[10_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[10_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[9000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[9_000])
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[10_000])
+    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[9_000])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--train_bg", action="store_true")
-    parser.add_argument("--c2f", action="store_true", default=False)
-    parser.add_argument("--c2f_every_step", type=float, default=1000,
-                        help="Recompute low pass filter size for every c2f_every_step iterations")
-    parser.add_argument("--c2f_max_lowpass", type=float, default=300, help="Maximum low pass filter size")
     parser.add_argument("--comp", action="store_true")
     parser.add_argument("--store_npz", action="store_true")
     args = parser.parse_args(sys.argv[1:])
