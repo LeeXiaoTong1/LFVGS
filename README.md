@@ -3,8 +3,9 @@
 ## Environmental Setups
 We provide install method based on Conda package and environment management:
 ```bash
+
 conda env create --file environment.yml
-conda activate L-GS
+conda activate LVGS
 ```
 
 ## Data Preparation
@@ -31,37 +32,39 @@ python tools/colmap_360.py
 If you encounter difficulties during data preprocessing, you can download dense point cloud data that has been preprocessed using Colmap. You may download them [through this link](https://drive.google.com/drive/folders/1VymLQAqzXtrd2CnWAFSJ0RTTnp25mLgA?usp=share_link). 
 
 ## Training
-LLFF datasets. You can set `--sample_pseudo_interval` to 10 to achieve good results, which can significantly reduce the training time.
+LLFF datasets. 
 ``` 
-python train.py  --source_path dataset/nerf_llff_data/trex --model_path output/trex --eval --n_views 3 --comp --store_npz
+python train.py  -s/nerf_llff_data/trex -m output/trex --eval --n_views 3 --comp --store_npz
 ```
 
 MipNerf360 datasets
 ``` 
-python train.py  --source_path dataset/mipnerf360/bonsai --model_path output/bonsai --eval --n_views 24 --comp --store_npz
+python train_360.py  -s dataset/mipnerf360/counter -s output/counter --eval --n_views 24 --comp --store_npz
+
+If you need to evaluate on 9 views
+Please remove the commented part of this code (https://github.com/LeeXiaoTong1/LFVGS/blob/24f1de9b99f2951953148a2e51e5c89f2dafc3b5/scene/dataset_readers.py#L263C1-L285C29). And comment out the line “ply_path = os.path.join(path, str(n_views) + "_views/dense/fused.ply")”
+
+python train_360.py  -s dataset/mipnerf360/counter -s output/counter --eval --n_views 9 --comp --store_npz
 ```
-If the evaluation metrics for a particular scene are slightly suboptimal, we recommend enhancing performance by adjusting the self.densify_grad_threshold. This adjustment depends on the number of initial point clouds within the scene. For scenes with relatively sparse initializations, we suggest lowering the self.densify_grad_threshold to prevent conflicts with the original density control mechanism of 3DGS.
+For some scenarios, if the results are significantly different from those in the original paper, it is recommended to manually adjust the number of training rounds to 9,000.
 
 ## Rendering
 
 ```
-python render.py --source_path dataset/nerf_llff_data/trex/ --model_path  output/trex --iteration 10000 
+python render.py -s dataset/nerf_llff_data/trex/ -m  output/trex --iteration {} 
 ```
 If you want to obtain depth maps predicted by a monocular depth estimator.
 
 ```
-python render.py --source_path dataset/nerf_llff_data/trex  --model_path  output/trex --iteration 10000 --render_depth
+python render.py -s dataset/nerf_llff_data/trex  -m  output/trex --iteration {} --render_depth
 ```
-You can render a downloadable video file by adding the 'video' parameter.
-```
-python render.py --source_path dataset/nerf_llff_data/trex  --model_path  output/trex --iteration 10000  --video  --fps 30
-```
+
 
 ## Evaluation
 You can just run the following script to evaluate the model.  
 
 ```
-python metrics.py --source_path dataset/nerf_llff_data/trex  --model_path  output/trex --iteration 10000
+python metrics.py -s dataset/nerf_llff_data/trex  -m  output/trex --iteration {}
 ```
 
 ## Acknowledgement
