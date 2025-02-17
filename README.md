@@ -1,9 +1,12 @@
 # LFVGS: Lightweight Few-shot View Gaussian Splatting reconstruction method
 
 ## Environmental Setups
+Thanks to the project [Diff Gaussian Rasterization Depth](https://github.com/leo-frank/diff-gaussian-rasterization-depth) for providing the depth correction rasterizer.
 We provide install method based on Conda package and environment management:
 ```bash
-
+cd submodules
+unzip diff-gaussian-rasterization-depth.zip
+cd ..
 conda env create --file environment.yml
 conda activate LVGS
 ```
