@@ -57,7 +57,6 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
         self.n_views = 0
-        self.cap_max = -1
         
         self.max_hashmap = 19
         self.rvq_size = 64
@@ -81,8 +80,7 @@ class PipelineParams(ParamGroup):
 
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
-        
-        self.iterations = 10_000
+        self.iterations = 9_000
         self.position_lr_init = 0.00016
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01
@@ -92,20 +90,12 @@ class OptimizationParams(ParamGroup):
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
         self.percent_dense = 0.01
-        
         self.lambda_dssim = 0.2
-        # self.lambda_dssim = 0.5
-        
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
         self.prune_from_iter = 500
         self.densify_until_iter = 10_000
-        
-        # if 360 set 0.0002
-        # if llff set 0.0005
-        # self.densify_grad_threshold = 0.0005
-        ## trex and horns set 0.0005 bicycle set 0.0001
         self.densify_grad_threshold = 0.0002
         
         # self.prune_threshold = 0.005
@@ -114,32 +104,18 @@ class OptimizationParams(ParamGroup):
         self.end_sample_pseudo = 9500
         self.sample_pseudo_interval = 10
         self.dist_thres = 10.
-        
-        # self.depth_weight = 0.05
+
         self.depth_weight = 0.05
-        
-        self.depth_pseudo_weight = 0.5
-        self.random_background = False
-        self.noise_lr = 5e5
-        self.scale_reg = 0.01
         self.opacity_reg = 0.01
         
         self.rvq_iter = 9700
         self.mask_lr = 0.01
         self.net_lr = 0.01
+        # self.net_lr_step = [2000, 6000, 8000]
         self.net_lr_step = [2500, 5000, 7500]
         self.lambda_mask = 0.0005
-        
-        # self.resize_period = 0.3
-        # self.resize_scale = 0.7
-        # self.transform = "downsample"
-        
+
         self.error_tolerance = 0.01
-        # self.error_tolerance = 0.01
-        
-        # if 360 set 0.001
-        # if llff set 0.01
-        self.lambda_normal = 0.02
         
         super().__init__(parser, "Optimization Parameters")
 
