@@ -8,104 +8,155 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+import copy
 import matplotlib.pyplot as plt
 import torch
-import math
-# from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
-# from diff_gauss import GaussianRasterizationSettings, GaussianRasterizer
-from diff_gaussian_rasterization_depth import GaussianRasterizationSettings, GaussianRasterizer
-from scene.gaussian_model import GaussianModel
-from utils.sh_utils import eval_sh
+from scene import Scene
+import os
+from tqdm import tqdm
+import numpy as np
+from os import makedirs
+from gaussian_renderer import render
+import torchvision
+from utils.general_utils import safe_state
+from argparse import ArgumentParser
+from arguments import ModelParams, PipelineParams, get_combined_args
+from gaussian_renderer import GaussianModel
+import cv2
+import time
+from tqdm import tqdm
+import torch.utils.benchmark as benchmark
+from utils.graphics_utils import getWorld2View2
+from utils.pose_utils import generate_ellipse_path, generate_spiral_path
+from utils.general_utils import vis_depth
+
+from depth_anything_v2.dpt import DepthAnythingV2
+import torch
+
+DEVICE = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+
+def load_depth_model(mode='vitl'):
+    model_configs = {
+        'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
+        'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
+        'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
+        'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
+    }
+
+    model = DepthAnythingV2(**model_configs[mode])
+    model.load_state_dict(torch.load(f'checkpoints/depth_anything_v2_{mode}.pth', map_location='cpu'))
+    model = model.to(DEVICE).eval()
+    return model
+
+
+def render_fn(views, gaussians, pipeline, background):
+    with torch.autocast(device_type='cuda', dtype=torch.float16):
+        for view in views:
+            render(view, gaussians, pipeline, background)
+
+def measure_fps(scene, gaussians, pipeline, background):
+    with torch.no_grad():
+        views = scene.getTrainCameras() + scene.getTestCameras()
+        t0 = benchmark.Timer(stmt='render_fn(views, gaussians, pipeline, background, use_amp)',
+                            setup='from __main__ import render_fn',
+                            globals={'views': views, 'gaussians': gaussians, 'pipeline': pipeline,
+                                     'background': background},
+                            )
+        time = t0.timeit(50)
+        fps = len(views)/time.median
+        print("Rendering FPS: ", fps)
+    return fps
+
+def render_set(model_path, name, iteration, views, gaussians, pipeline, background, args):
+    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
+    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+
+    makedirs(render_path, exist_ok=True)
+    makedirs(gts_path, exist_ok=True)
+
+    for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
+        rendering = render(view, gaussians, pipeline, background)
+        gt = view.original_image[0:3, :, :]
+        torchvision.utils.save_image(rendering["render"], os.path.join(render_path, view.image_name + '.png'))
+                                            #'{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(gt, os.path.join(gts_path, view.image_name + ".png"))
+
+        if args.render_depth:
+            # depth_map = vis_depth(rendering['depth'][0].detach().cpu().numpy())
+            depth_map = vis_depth(rendering['depth'].detach().cpu().numpy())
+            np.save(os.path.join(render_path, view.image_name + '_depth.npy'), rendering['depth'][0].detach().cpu().numpy())
+            cv2.imwrite(os.path.join(render_path, view.image_name + '_depth.png'), depth_map)
+
+def render_video(source_path, model_path, iteration, views, gaussians, pipeline, background, fps=30):
+    render_path = os.path.join(model_path, 'video', "ours_{}".format(iteration))
+    makedirs(render_path, exist_ok=True)
+    view = copy.deepcopy(views[0])
+
+    if source_path.find('llff') != -1:
+        render_poses = generate_spiral_path(np.load(source_path + '/poses_bounds.npy'))
+    elif source_path.find('360') != -1:
+        render_poses = generate_ellipse_path(views)
+
+    size = (view.original_image.shape[2], view.original_image.shape[1])
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    final_video = cv2.VideoWriter(os.path.join(render_path, 'final_video.mp4'), fourcc, fps, size)
+    # final_video = cv2.VideoWriter(os.path.join('/ssd1/zehao/gs_release/video/', str(iteration), model_path.split('/')[-1] + '.mp4'), fourcc, fps, size)
+
+    for idx, pose in enumerate(tqdm(render_poses, desc="Rendering progress")):
+        view.world_view_transform = torch.tensor(getWorld2View2(pose[:3, :3].T, pose[:3, 3], view.trans, view.scale)).transpose(0, 1).cuda()
+        view.full_proj_transform = (view.world_view_transform.unsqueeze(0).bmm(view.projection_matrix.unsqueeze(0))).squeeze(0)
+        view.camera_center = view.world_view_transform.inverse()[3, :3]
+        rendering = render(view, gaussians, pipeline, background)
+
+        img = torch.clamp(rendering["render"], min=0., max=1.)
+        torchvision.utils.save_image(img, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
+        video_img = (img.permute(1, 2, 0).detach().cpu().numpy() * 255.).astype(np.uint8)[..., ::-1]
+        final_video.write(video_img)
+
+    final_video.release()
 
 
 
-def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color : torch.Tensor, image_shape=None, scaling_modifier = 1.0,
-           override_color = None, white_bg = False, itr=-1, rvq_iter=False):
-    """
-    Render the scene.
+def render_sets(dataset : ModelParams, pipeline : PipelineParams, args):
 
-    Background tensor (bg_color) must be on GPU!
-    """
-
-    # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-    screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
-    try:
-        screenspace_points.retain_grad()
-    except:
-        pass
-
-    # Set up rasterization configuration
-    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
-    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
-                       
-    if image_shape is None:
-        image_shape = (3, viewpoint_camera.image_height, viewpoint_camera.image_width)
-
-    if min(pc.bg_color.shape) != 0:
-        bg_color = torch.tensor([0., 0., 0.]).cuda()
+    with torch.no_grad():
+        gaussians = GaussianModel(args)
+        # 加载 depth_model
+        depth_model = load_depth_model('vitl')  # 根据需要的模型类型加载
+        scene = Scene(args, gaussians, load_iteration=args.iteration, shuffle=False, depth_model=depth_model)
         
-    raster_settings = GaussianRasterizationSettings(
-        image_height=image_shape[1],
-        image_width=image_shape[2],
-        tanfovx=tanfovx,
-        tanfovy=tanfovy,
-        bg = bg_color, #torch.tensor([1., 1., 1.]).cuda() if white_bg else torch.tensor([0., 0., 0.]).cuda(), #bg_color,
-        scale_modifier=scaling_modifier,
-        viewmatrix=viewpoint_camera.world_view_transform,
-        projmatrix=viewpoint_camera.full_proj_transform,
-        sh_degree=pc.active_sh_degree,
-        campos=viewpoint_camera.camera_center,
-        prefiltered=False,
-        debug=pipe.debug
-    )
-    
-    
-    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+        gaussians.precompute()
 
-    means3D = pc.get_xyz
-    means2D = screenspace_points
-    cov3D_precomp = None
-    # if pipe.compute_cov3D_python:
-    #     cov3D_precomp = pc.get_covariance(scaling_modifier)
-    # l_vqsca=0
-    # l_vqrot=0
-    if itr == -1:
-        scales = pc._scaling
-        rotations = pc._rotation
-        opacity = pc._opacity
-        
-        dir_pp = (means3D - viewpoint_camera.camera_center.repeat(means3D.shape[0], 1))
-        dir_pp = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-        shs = pc.mlp_head(torch.cat([pc._feature, pc.direction_encoding(dir_pp)], dim=-1)).unsqueeze(1)
-        
-    else:
-        scales = pc.get_scaling
-        rotations = pc.get_rotation
-        opacity = pc.get_opacity
-            
-        xyz = pc.contract_to_unisphere(means3D.clone().detach(), torch.tensor([-1.0, -1.0, -1.0, 1.0, 1.0, 1.0], device='cuda'))
-        dir_pp = (means3D - viewpoint_camera.camera_center.repeat(means3D.shape[0], 1))
-        dir_pp = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-        shs = pc.mlp_head(torch.cat([pc.recolor(xyz), pc.direction_encoding(dir_pp)], dim=-1)).unsqueeze(1)
-        
-    rendered_image, radii, depth_map, weight_map= rasterizer(
-        means3D = means3D.float(),
-        means2D = means2D,
-        shs = shs.float(),
-        colors_precomp = None,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp
-    )
-    if min(pc.bg_color.shape) != 0:
-        rendered_image = rendered_image + (1 - alpha) * torch.sigmoid(pc.bg_color)  # torch.ones((3, 1, 1)).cuda()
+        bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
-    # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
-    # They will be excluded from value updates used in the splitting criteria.
-    return {"render": rendered_image,
-            "viewspace_points": screenspace_points,
-            "visibility_filter" : radii > 0,
-            "radii": radii,
-            "depth": depth_map}
-    
+        if args.video:
+            render_video(dataset.source_path, dataset.model_path, scene.loaded_iter, scene.getTestCameras(),
+                         gaussians, pipeline, background, args.fps)
+
+        if not args.skip_train:
+            render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, args)
+        if not args.skip_test:
+            render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, args)
+
+
+
+if __name__ == "__main__":
+    # Set up command line argument parser
+    parser = ArgumentParser(description="Testing script parameters")
+    model = ModelParams(parser, sentinel=True)
+    pipeline = PipelineParams(parser)
+    parser.add_argument("--iteration", default=-1, type=int)
+    parser.add_argument("--skip_train", action="store_true")
+    parser.add_argument("--skip_test", action="store_true")
+    parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--video", action="store_true")
+    parser.add_argument("--fps", default=30, type=int)
+    parser.add_argument("--render_depth", action="store_true")
+    args = get_combined_args(parser)
+    print("Rendering " + args.model_path)
+
+    # Initialize system state (RNG)
+    safe_state(args.quiet)
+
+    render_sets(model.extract(args), pipeline.extract(args), args)
