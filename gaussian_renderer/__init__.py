@@ -11,7 +11,9 @@
 import matplotlib.pyplot as plt
 import torch
 import math
-from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+# from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+# from diff_gauss import GaussianRasterizationSettings, GaussianRasterizer
+from diff_gaussian_rasterization_depth import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
@@ -35,11 +37,13 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color : torch.Tensor, i
     # Set up rasterization configuration
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+                       
+    if image_shape is None:
+        image_shape = (3, viewpoint_camera.image_height, viewpoint_camera.image_width)
 
     if min(pc.bg_color.shape) != 0:
         bg_color = torch.tensor([0., 0., 0.]).cuda()
 
-    confidence = pc.confidence if pipe.use_confidence else torch.ones_like(pc.confidence)
     raster_settings = GaussianRasterizationSettings(
         image_height=image_shape[1],
         image_width=image_shape[2],
@@ -52,16 +56,18 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color : torch.Tensor, i
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
-        debug=pipe.debug,
-        confidence=confidence
+        debug=pipe.debug
     )
-    
     
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
     means3D = pc.get_xyz
     means2D = screenspace_points
     cov3D_precomp = None
+    # if pipe.compute_cov3D_python:
+    #     cov3D_precomp = pc.get_covariance(scaling_modifier)
+    # l_vqsca=0
+    # l_vqrot=0
     if itr == -1:
         scales = pc._scaling
         rotations = pc._rotation
@@ -72,26 +78,16 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color : torch.Tensor, i
         shs = pc.mlp_head(torch.cat([pc._feature, pc.direction_encoding(dir_pp)], dim=-1)).unsqueeze(1)
         
     else:
-        mask = ((torch.sigmoid(pc._mask) > 0.01).float()- torch.sigmoid(pc._mask)).detach() + torch.sigmoid(pc._mask)
-        if rvq_iter:
-            scales = pc.vq_scale(pc.get_scaling.unsqueeze(0))[0]
-            rotations = pc.vq_rot(pc.get_rotation.unsqueeze(0))[0]
-            scales = scales.squeeze()
-            rotations = rotations.squeeze()
-            opacity = pc.get_opacity
-        else:
-            scales = pc.get_scaling*mask
-            rotations = pc.get_rotation
-            opacity = pc.get_opacity*mask
+        scales = pc.get_scaling
+        rotations = pc.get_rotation
+        opacity = pc.get_opacity
             
         xyz = pc.contract_to_unisphere(means3D.clone().detach(), torch.tensor([-1.0, -1.0, -1.0, 1.0, 1.0, 1.0], device='cuda'))
         dir_pp = (means3D - viewpoint_camera.camera_center.repeat(means3D.shape[0], 1))
         dir_pp = dir_pp/dir_pp.norm(dim=1, keepdim=True)
         shs = pc.mlp_head(torch.cat([pc.recolor(xyz), pc.direction_encoding(dir_pp)], dim=-1)).unsqueeze(1)
-
-
-    # Rasterize visible Gaussians to image, obtain their radii (on screen).
-    rendered_image, radii, depth, alpha = rasterizer(
+    
+    rendered_image, radii, depth_map, weight_map= rasterizer(
         means3D = means3D.float(),
         means2D = means2D,
         shs = shs.float(),
@@ -99,7 +95,8 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color : torch.Tensor, i
         opacities = opacity,
         scales = scales,
         rotations = rotations,
-        cov3D_precomp = cov3D_precomp)
+        cov3D_precomp = cov3D_precomp
+    )
 
     if min(pc.bg_color.shape) != 0:
         rendered_image = rendered_image + (1 - alpha) * torch.sigmoid(pc.bg_color)  # torch.ones((3, 1, 1)).cuda()
@@ -111,4 +108,5 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color : torch.Tensor, i
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
             "radii": radii,
-            "depth": depth}
+            "depth": depth_map}
+    
