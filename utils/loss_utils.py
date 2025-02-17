@@ -12,10 +12,60 @@
 import torch
 from torch.autograd import Variable
 from math import exp
+import math
 import torch.nn.functional as F
-import os
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+from torchmetrics.functional.regression import pearson_corrcoef
 
+
+# def compute_patchwise_pearson(midas_depth, rendered_depth, patch_size=(5, 17), stride=(5, 17)):
+#     H, W = 504, 378
+#     patch_H, patch_W = patch_size
+#     stride_H, stride_W = stride
+
+#     # 确保数据大小正确
+#     if midas_depth.shape[0] != H * W or rendered_depth.shape[0] != H * W:
+#         raise ValueError(f"Input size mismatch: expected {H*W} elements, but got {midas_depth.shape[0]} and {rendered_depth.shape[0]} elements")
+    
+#     # Reshape 成 (H, W) 的二维张量
+#     midas_depth = midas_depth.view(1, 1, H, W)  # (N=1, C=1, H, W)
+#     rendered_depth = rendered_depth.view(1, 1, H, W)
+
+#     # 使用 unfold 获取所有 patches
+#     midas_patches = F.unfold(midas_depth, kernel_size=(patch_H, patch_W), stride=(stride_H, stride_W))
+#     rendered_patches = F.unfold(rendered_depth, kernel_size=(patch_H, patch_W), stride=(stride_H, stride_W))
+
+#     # 展平 patches 为 2D 张量 (num_patches, patch_size * patch_size)
+#     midas_patches = midas_patches.view(midas_patches.size(1), -1)  # (num_patch_elements, num_patches)
+#     rendered_patches = rendered_patches.view(rendered_patches.size(1), -1)  # (num_patch_elements, num_patches)
+
+#     # 计算 Pearson 相关性
+#     pcc_1 = pearson_corrcoef(-midas_patches, rendered_patches)
+#     pcc_2 = pearson_corrcoef(1 / (midas_patches + 200.), rendered_patches)
+
+#     # 计算最小损失
+#     loss = torch.min(1 - pcc_1, 1 - pcc_2).mean()
+#     return loss
+
+def patchify(input, patch_size):
+    patches = F.unfold(input, kernel_size=patch_size, stride=patch_size).permute(0,2,1).view(-1, 1*patch_size*patch_size)
+    return patches
+
+def margin_l2_loss(network_output, gt, margin, return_mask=False):
+    mask = (network_output - gt).abs() > margin
+    if not return_mask:
+        return ((network_output - gt)[mask] ** 2).mean()
+    else:
+        return ((network_output - gt)[mask] ** 2).mean(), mask
+
+def normalize(input, mean=None, std=None):
+    input_mean = torch.mean(input, dim=1, keepdim=True) if mean is None else mean
+    input_std = torch.std(input, dim=1, keepdim=True) if std is None else std
+    return (input - input_mean) / (input_std + 1e-2*torch.std(input.reshape(-1)))
+
+def patch_norm_mse_loss(input, target, patch_size, margin, return_mask=False):
+    input_patches = normalize(patchify(input, patch_size))
+    target_patches = normalize(patchify(target, patch_size))
+    return margin_l2_loss(input_patches, target_patches, margin, return_mask)
 
 def l1_loss(network_output, gt):
     return torch.abs((network_output - gt)).mean()
