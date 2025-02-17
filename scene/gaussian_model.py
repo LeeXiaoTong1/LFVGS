@@ -385,8 +385,7 @@ class GaussianModel:
         elif os.path.isfile(path + '.npz'):
             path = path + '.npz'
             print("Loading ", path)
-            load_dict = np.load(path, allow_pickle=True)
-
+            load_dict = np.load(path, allow_pickle=True)                                                                                                                                                                                                                          
             scale = np.packbits(np.unpackbits(load_dict["scale"], axis=None)[:load_dict["xyz"].shape[0]*load_dict["rvq_info"][0]*load_dict["rvq_info"][1]].reshape(-1, load_dict["rvq_info"][1]), axis=-1, bitorder='little')
             rotation = np.packbits(np.unpackbits(load_dict["rotation"], axis=None)[:load_dict["xyz"].shape[0]*load_dict["rvq_info"][0]*load_dict["rvq_info"][1]].reshape(-1, load_dict["rvq_info"][1]), axis=-1, bitorder='little')
 
@@ -600,22 +599,18 @@ class GaussianModel:
         self.densification_postfix(new_xyz, new_opacity, new_scaling, new_rotation, new_mask)
     
     def proximity_opt(self, scene_extent, N=3):
-        # 获取不透明度集合
         opacity_values = self.get_opacity.squeeze()
-    
-        # 计算最大值、最小值和平均值
         opacity_max = torch.max(opacity_values)
         opacity_min = torch.min(opacity_values)
         opacity_mean = torch.mean(opacity_values)
-
-        # 输出结果
         # print("Max opacity:", opacity_max.item())
         # print("Min opacity:", opacity_min.item())
         # print("Mean opacity:", opacity_mean.item())
         
         opacity_mask = self.get_opacity.squeeze() < opacity_mean
+        # opacity_mask = self.get_opacity.squeeze() < 0.03
         dist, nearest_indices = distCUDA2(self.get_xyz)
-        selected_pts_mask = torch.logical_and(dist > (11. * scene_extent),
+        selected_pts_mask = torch.logical_and(dist > (5. * scene_extent),
                                               torch.max(self.get_scaling, dim=1).values > (scene_extent))
         selected_pts_mask = torch.logical_and(selected_pts_mask, opacity_mask)
 
@@ -696,7 +691,7 @@ class GaussianModel:
         if iter < 2000:
             self.proximity(extent)
             
-        if iter > 2000 and iter < 2500:
+        if iter > 2000 and iter < 4000:
             self.proximity_opt(extent)
 
         # prune_mask = torch.logical_or((torch.sigmoid(self._mask) <= 0.01).squeeze(),(self.get_opacity < min_opacity).squeeze())
@@ -741,8 +736,6 @@ class GaussianModel:
         return total_mb, codec.encode(input_code_list), codec.get_code_table()
 
     def final_prune(self, iter, compress=False):
-        prune_mask = (torch.sigmoid(self._mask) <= 0.01).squeeze()
-        # self.prune_points(prune_mask, iter)
 
         for m in self.vq_scale.layers:
             m.training = False
