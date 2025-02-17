@@ -40,7 +40,7 @@ If you encounter difficulties during data preprocessing, you can download dense 
 ## Training
 LLFF datasets. 
 ``` 
-python train.py  -s/nerf_llff_data/trex -m output/trex --eval --n_views 3 --comp --store_npz
+python train.py  -s dataset/nerf_llff_data/trex -m output/trex --eval --n_views 3 --comp --store_npz
 ```
 
 MipNerf360 datasets
