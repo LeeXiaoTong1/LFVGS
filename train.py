@@ -43,7 +43,7 @@ from depth_anything_v2.dpt import DepthAnythingV2
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
 
-def load_depth_model(mode='vits'):
+def load_depth_model(mode='vitl'):
     model_configs = {
         'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
         'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
@@ -56,7 +56,7 @@ def load_depth_model(mode='vits'):
     model = model.to(DEVICE).eval()
     return model
 
-depth_model = load_depth_model('vits')
+depth_model = load_depth_model('vitl')
 
 
 
