@@ -260,9 +260,10 @@ def storePly(path, xyz, rgb):
     ply_data.write(path)
 
 
-def readColmapSceneInfo(path, images, eval, n_views=0, llffhold=8):
+def readColmapSceneInfo(path, images, dataset, eval, n_views=0, llffhold=8):
     # ply_path = os.path.join(path, "sparse/0/points3D.ply")
     # bin_path = os.path.join(path, "sparse/0/points3D.bin")
+    
     ply_path = os.path.join(path, str(n_views) + "_views/dense/fused.ply")
 
     try:
@@ -282,7 +283,6 @@ def readColmapSceneInfo(path, images, eval, n_views=0, llffhold=8):
     #     xyz, rgb, _ = read_points3D_binary(bin_path)
     #     storePly(ply_path, xyz, rgb)
     pcd = fetchPly(ply_path)
-
 
     reading_dir = "images" if images == None else images
     rgb_mapping = [f for f in sorted(glob.glob(os.path.join(path, reading_dir, '*')))
