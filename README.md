@@ -35,7 +35,7 @@ unzip -d mipnerf360 360_v2.zip
 # run colmap on MipNeRF-360 dataset
 python tools/colmap_360.py
 ```
-If you encounter difficulties during data preprocessing, you can download dense point cloud data that has been preprocessed using Colmap. You may download them [through this link](https://drive.google.com/drive/folders/1VymLQAqzXtrd2CnWAFSJ0RTTnp25mLgA?usp=share_link). 
+If you encounter difficulties during data preprocessing, you can download dense point cloud data that has been preprocessed using Colmap. Thanks to the processing provided by FSGS, we were able to regenerate dense point clouds based on their method. You may download them [through this link](https://drive.google.com/drive/folders/1VymLQAqzXtrd2CnWAFSJ0RTTnp25mLgA?usp=share_link). 
 
 ## Training
 LLFF datasets. 
